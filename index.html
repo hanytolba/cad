@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>برنامج CAD 2D</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#1a1a2e;color:#eee;display:flex;flex-direction:column;height:100vh;overflow:hidden}
+#toolbar{display:flex;align-items:center;gap:4px;padding:6px 10px;background:#16213e;border-bottom:1px solid #0f3460;flex-wrap:wrap}
+.tool-group{display:flex;gap:3px;padding:0 6px;border-right:1px solid #0f3460}
+.tool-group:last-child{border:none}
+button{background:#0f3460;color:#eee;border:1px solid #1a4a7a;border-radius:4px;padding:5px 10px;cursor:pointer;font-size:12px;white-space:nowrap;transition:all .15s}
+button:hover{background:#1a4a7a}
+button.active{background:#e94560;border-color:#e94560;color:#fff}
+select,input[type=color],input[type=range],input[type=number]{background:#0f3460;color:#eee;border:1px solid #1a4a7a;border-radius:4px;padding:4px 6px;font-size:12px}
+input[type=color]{padding:2px;width:36px;height:28px;cursor:pointer}
+label{font-size:11px;color:#aaa}
+#main{display:flex;flex:1;overflow:hidden}
+#sidebar{width:180px;background:#16213e;border-left:1px solid #0f3460;padding:8px;overflow-y:auto;font-size:12px;flex-shrink:0}
+#sidebar h3{color:#e94560;margin-bottom:8px;font-size:13px}
+.prop-row{margin-bottom:6px}
+.prop-row label{display:block;color:#aaa;margin-bottom:2px;font-size:11px}
+.prop-row input,.prop-row select{width:100%}
+#canvas-wrap{flex:1;position:relative;overflow:hidden;cursor:crosshair}
+canvas{display:block}
+#status{padding:3px 10px;background:#16213e;border-top:1px solid #0f3460;font-size:11px;color:#aaa;display:flex;gap:20px}
+#layers{margin-top:12px}
+.layer-item{display:flex;align-items:center;gap:5px;padding:3px;border-radius:3px;cursor:pointer;margin-bottom:2px}
+.layer-item:hover{background:#0f3460}
+.layer-item.active{background:#0f3460;border:1px solid #e94560}
+.layer-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.dim-label{position:absolute;background:rgba(0,0,0,.7);color:#fff;padding:1px 4px;font-size:10px;pointer-events:none;border-radius:2px}
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <div class="tool-group">
+    <button id="t-select" class="active" onclick="setTool('select')" title="تحديد (S)">↖ تحديد</button>
+    <button id="t-line" onclick="setTool('line')" title="خط (L)">╱ خط</button>
+    <button id="t-rect" onclick="setTool('rect')" title="مستطيل (R)">▭ مستطيل</button>
+    <button id="t-circle" onclick="setTool('circle')" title="دائرة (C)">◯ دائرة</button>
+    <button id="t-ellipse" onclick="setTool('ellipse')" title="بيضاوي">⬭ بيضاوي</button>
+    <button id="t-poly" onclick="setTool('poly')" title="مضلع حر (P)">⬡ مضلع</button>
+    <button id="t-dim" onclick="setTool('dim')" title="بُعد (D)">↔ بُعد</button>
+    <button id="t-text" onclick="setTool('text')" title="نص (T)">T نص</button>
+  </div>
+  <div class="tool-group">
+    <label>لون:</label>
+    <input type="color" id="strokeColor" value="#00d4ff" onchange="updateStyle()">
+    <label>تعبئة:</label>
+    <input type="color" id="fillColor" value="#1a1a2e" onchange="updateStyle()">
+    <label><input type="checkbox" id="useFill" onchange="updateStyle()"> تعبئة</label>
+  </div>
+  <div class="tool-group">
+    <label>سُمك:</label>
+    <input type="range" id="lineWidth" min="0.5" max="10" step="0.5" value="1.5" style="width:70px" onchange="updateStyle()">
+    <span id="lwLabel" style="font-size:11px">1.5</span>
+  </div>
+  <div class="tool-group">
+    <label><input type="checkbox" id="snapGrid" checked> Snap</label>
+    <label>شبكة:</label>
+    <input type="number" id="gridSize" value="20" min="5" max="100" style="width:50px" onchange="redraw()">
+  </div>
+  <div class="tool-group">
+    <button onclick="undo()">↩ Undo</button>
+    <button onclick="redo()">↪ Redo</button>
+    <button onclick="deleteSelected()" style="color:#e94560">🗑 حذف</button>
+    <button onclick="clearAll()" style="color:#e94560">✕ مسح كل</button>
+  </div>
+  <div class="tool-group">
+    <button onclick="exportPNG()">⬇ PNG</button>
+    <button onclick="exportSVG()">⬇ SVG</button>
+    <button onclick="saveProject()">💾 حفظ</button>
+    <button onclick="loadProject()">📂 فتح</button>
+  </div>
+  <div class="tool-group">
+    <button onclick="zoomIn()">🔍+</button>
+    <button onclick="zoomOut()">🔍-</button>
+    <button onclick="resetView()">⊡ Reset</button>
+  </div>
+</div>
+
+<div id="main">
+  <div id="canvas-wrap">
+    <canvas id="c"></canvas>
+  </div>
+  <div id="sidebar">
+    <h3>خصائص</h3>
+    <div id="props">
+      <div style="color:#555;font-size:11px">اختر عنصر لعرض خصائصه</div>
+    </div>
+    <div id="layers">
+      <h3>الطبقات</h3>
+      <div id="layer-list"></div>
+      <button onclick="addLayer()" style="width:100%;margin-top:5px;font-size:11px">+ طبقة جديدة</button>
+    </div>
+    <div style="margin-top:12px">
+      <h3>إحصائيات</h3>
+      <div id="stats" style="font-size:11px;color:#aaa;line-height:1.8"></div>
+    </div>
+  </div>
+</div>
+
+<div id="status">
+  <span id="s-tool">الأداة: تحديد</span>
+  <span id="s-pos">X: 0  Y: 0</span>
+  <span id="s-zoom">تكبير: 100%</span>
+  <span id="s-count">عناصر: 0</span>
+  <span style="margin-right:auto">↑ اضغط Ctrl+Z للتراجع | Ctrl+Y للإعادة | Del للحذف | Space+سحب للتحريك</span>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const wrap = document.getElementById('canvas-wrap');
+
+let tool = 'select';
+let shapes = [];
+let selected = [];
+let history = [[]];
+let histIdx = 0;
+let layers = [{id:0,name:'الطبقة 1',color:'#00d4ff',visible:true}];
+let currentLayer = 0;
+
+let zoom = 1, panX = 0, panY = 0;
+let isDrawing = false, isPanning = false;
+let startX, startY, curX, curY;
+let polyPoints = [];
+let tempShape = null;
+let dragOffsets = [];
+let resizeHandle = null;
+let spaceDown = false;
+let panStart = null;
+
+let style = {stroke:'#00d4ff', fill:'#1a1a2e', useFill:false, lineWidth:1.5};
+let idCounter = 1;
+
+function resize(){
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  redraw();
+}
+
+window.addEventListener('resize', resize);
+resize();
+
+function setTool(t){
+  tool = t;
+  polyPoints = [];
+  tempShape = null;
+  document.querySelectorAll('[id^="t-"]').forEach(b=>b.classList.remove('active'));
+  const el = document.getElementById('t-'+t);
+  if(el) el.classList.add('active');
+  document.getElementById('s-tool').textContent = 'الأداة: ' + ({
+    select:'تحديد',line:'خط',rect:'مستطيل',circle:'دائرة',
+    ellipse:'بيضاوي',poly:'مضلع',dim:'بُعد',text:'نص'
+  }[t]||t);
+  redraw();
+}
+
+function updateStyle(){
+  style.stroke = document.getElementById('strokeColor').value;
+  style.fill = document.getElementById('fillColor').value;
+  style.useFill = document.getElementById('useFill').checked;
+  style.lineWidth = parseFloat(document.getElementById('lineWidth').value);
+  document.getElementById('lwLabel').textContent = style.lineWidth;
+  if(selected.length){
+    selected.forEach(id=>{
+      const s = shapes.find(x=>x.id===id);
+      if(s){ s.stroke=style.stroke; s.fill=style.fill; s.useFill=style.useFill; s.lineWidth=style.lineWidth; }
+    });
+    pushHistory();
+    redraw();
+  }
+}
+
+function snap(v){
+  if(!document.getElementById('snapGrid').checked) return v;
+  const g = parseInt(document.getElementById('gridSize').value)||20;
+  return Math.round(v/g)*g;
+}
+
+function toWorld(cx,cy){
+  return {x:(cx-panX)/zoom, y:(cy-panY)/zoom};
+}
+
+function toScreen(wx,wy){
+  return {x:wx*zoom+panX, y:wy*zoom+panY};
+}
+
+function getMousePos(e){
+  const r = canvas.getBoundingClientRect();
+  const cx = e.clientX - r.left;
+  const cy = e.clientY - r.top;
+  const w = toWorld(cx,cy);
+  return {cx,cy,wx:w.x,wy:w.y,sx:snap(w.x),sy:snap(w.y)};
+}
+
+canvas.addEventListener('mousedown', e=>{
+  const p = getMousePos(e);
+  if(spaceDown || e.button===1){ isPanning=true; panStart={x:e.clientX-panX,y:e.clientY-panY}; return; }
+  if(e.button!==0) return;
+
+  if(tool==='select'){
+    const hit = hitTest(p.wx,p.wy);
+    if(hit){
+      if(!e.shiftKey){ selected=[hit.id]; }
+      else{ if(!selected.includes(hit.id)) selected.push(hit.id); else selected=selected.filter(x=>x!==hit.id); }
+      dragOffsets = selected.map(id=>{
+        const s=shapes.find(x=>x.id===id);
+        return {id, dx:p.wx-getBounds(s).cx, dy:p.wy-getBounds(s).cy};
+      });
+    } else {
+      selected=[];
+      dragOffsets=[];
+    }
+    isDrawing=true; startX=p.wx; startY=p.wy;
+    showProps();
+    redraw();
+    return;
+  }
+
+  if(tool==='poly'){
+    polyPoints.push({x:p.sx,y:p.sy});
+    return;
+  }
+
+  if(tool==='text'){
+    const txt = prompt('اكتب النص:');
+    if(txt){ addShape({type:'text',x:p.sx,y:p.sy,text:txt,...getStyle()}); pushHistory(); redraw(); }
+    return;
+  }
+
+  isDrawing=true;
+  startX=p.sx; startY=p.sy;
+});
+
+canvas.addEventListener('mousemove', e=>{
+  const p = getMousePos(e);
+  document.getElementById('s-pos').textContent = `X: ${Math.round(p.wx)}  Y: ${Math.round(p.wy)}`;
+  curX=p.sx; curY=p.sy;
+
+  if(isPanning){ panX=e.clientX-panStart.x; panY=e.clientY-panStart.y; redraw(); return; }
+  if(!isDrawing) return;
+
+  if(tool==='select' && dragOffsets.length){
+    dragOffsets.forEach(({id,dx,dy})=>{
+      const s=shapes.find(x=>x.id===id);
+      if(!s) return;
+      const b=getBounds(s);
+      const ddx=p.wx-dx-b.cx, ddy=p.wy-dy-b.cy;
+      moveShape(s,ddx,ddy);
+    });
+    redraw();
+    return;
+  }
+
+  tempShape = buildTemp(tool, startX,startY,curX,curY);
+  redraw();
+});
+
+canvas.addEventListener('mouseup', e=>{
+  if(isPanning){ isPanning=false; return; }
+  if(!isDrawing) return;
+  isDrawing=false;
+
+  if(tool==='select'){ if(dragOffsets.length) pushHistory(); dragOffsets=[]; return; }
+  if(tool==='poly') return;
+
+  const s = buildShape(tool, startX,startY,curX,curY);
+  if(s){ addShape(s); pushHistory(); }
+  tempShape=null;
+  redraw();
+});
+
+canvas.addEventListener('dblclick', e=>{
+  if(tool==='poly'){
+    if(polyPoints.length>=2){
+      addShape({type:'poly',points:[...polyPoints],...getStyle()});
+      pushHistory();
+    }
+    polyPoints=[];
+    tempShape=null;
+    redraw();
+  }
+});
+
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  const p = getMousePos(e);
+  const factor = e.deltaY<0?1.1:0.9;
+  const newZoom = Math.max(0.05,Math.min(50,zoom*factor));
+  panX = p.cx - (p.cx-panX)*(newZoom/zoom);
+  panY = p.cy - (p.cy-panY)*(newZoom/zoom);
+  zoom = newZoom;
+  document.getElementById('s-zoom').textContent = `تكبير: ${Math.round(zoom*100)}%`;
+  redraw();
+},{passive:false});
+
+document.addEventListener('keydown', e=>{
+  if(e.code==='Space'){ spaceDown=true; canvas.style.cursor='grab'; }
+  if(e.key==='Delete'||e.key==='Backspace') deleteSelected();
+  if(e.ctrlKey&&e.key==='z'){ e.preventDefault(); undo(); }
+  if(e.ctrlKey&&e.key==='y'){ e.preventDefault(); redo(); }
+  if(!e.ctrlKey){
+    const map={s:'select',l:'line',r:'rect',c:'circle',p:'poly',d:'dim',t:'text'};
+    if(map[e.key]) setTool(map[e.key]);
+  }
+  if(e.key==='Escape'){ polyPoints=[]; tempShape=null; redraw(); }
+});
+
+document.addEventListener('keyup', e=>{
+  if(e.code==='Space'){ spaceDown=false; canvas.style.cursor='crosshair'; }
+});
+
+function getStyle(){
+  return {stroke:style.stroke, fill:style.fill, useFill:style.useFill, lineWidth:style.lineWidth, layer:currentLayer};
+}
+
+function addShape(s){
+  s.id = idCounter++;
+  shapes.push(s);
+  document.getElementById('s-count').textContent = `عناصر: ${shapes.length}`;
+  updateStats();
+}
+
+function buildTemp(t,x1,y1,x2,y2){
+  return buildShape(t,x1,y1,x2,y2,true);
+}
+
+function buildShape(t,x1,y1,x2,y2,temp=false){
+  const base = temp?{}:getStyle();
+  switch(t){
+    case 'line': return {type:'line',x1,y1,x2,y2,...base};
+    case 'rect': return {type:'rect',x:Math.min(x1,x2),y:Math.min(y1,y2),w:Math.abs(x2-x1),h:Math.abs(y2-y1),...base};
+    case 'circle':{ const r=Math.hypot(x2-x1,y2-y1); return {type:'circle',cx:x1,cy:y1,r,...base}; }
+    case 'ellipse':{ return {type:'ellipse',cx:(x1+x2)/2,cy:(y1+y2)/2,rx:Math.abs(x2-x1)/2,ry:Math.abs(y2-y1)/2,...base}; }
+    case 'dim': return {type:'dim',x1,y1,x2,y2,...base};
+    default: return null;
+  }
+}
+
+function drawShape(s, isTemp=false){
+  ctx.save();
+  ctx.strokeStyle = isTemp?'rgba(255,255,0,0.8)':s.stroke||'#00d4ff';
+  ctx.fillStyle = s.useFill?(s.fill||'#1a1a2e'):'transparent';
+  ctx.lineWidth = (s.lineWidth||1.5)/zoom;
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  if(isTemp){ ctx.setLineDash([5/zoom,3/zoom]); }
+
+  switch(s.type){
+    case 'line':
+      ctx.beginPath(); ctx.moveTo(s.x1,s.y1); ctx.lineTo(s.x2,s.y2); ctx.stroke(); break;
+    case 'rect':
+      ctx.beginPath(); ctx.rect(s.x,s.y,s.w,s.h);
+      if(s.useFill) ctx.fill(); ctx.stroke(); break;
+    case 'circle':
+      ctx.beginPath(); ctx.arc(s.cx,s.cy,s.r,0,Math.PI*2);
+      if(s.useFill) ctx.fill(); ctx.stroke(); break;
+    case 'ellipse':
+      ctx.beginPath(); ctx.ellipse(s.cx,s.cy,Math.abs(s.rx),Math.abs(s.ry),0,0,Math.PI*2);
+      if(s.useFill) ctx.fill(); ctx.stroke(); break;
+    case 'poly':
+      if(!s.points||s.points.length<2) break;
+      ctx.beginPath(); ctx.moveTo(s.points[0].x,s.points[0].y);
+      s.points.slice(1).forEach(p=>ctx.lineTo(p.x,p.y)); ctx.closePath();
+      if(s.useFill) ctx.fill(); ctx.stroke(); break;
+    case 'text':
+      ctx.fillStyle = s.stroke||'#00d4ff';
+      ctx.font=`${14/zoom}px Arial`;
+      ctx.textAlign='right';
+      ctx.fillText(s.text,s.x,s.y); break;
+    case 'dim':
+      drawDim(s); break;
+  }
+  ctx.restore();
+}
+
+function drawDim(s){
+  const dx=s.x2-s.x1, dy=s.y2-s.y1;
+  const len=Math.hypot(dx,dy);
+  const ang=Math.atan2(dy,dx);
+  const off=15/zoom;
+  const nx=-Math.sin(ang)*off, ny=Math.cos(ang)*off;
+  ctx.strokeStyle='#ffcc00'; ctx.lineWidth=1/zoom;
+  ctx.beginPath();
+  ctx.moveTo(s.x1+nx,s.y1+ny); ctx.lineTo(s.x2+nx,s.y2+ny);
+  ctx.moveTo(s.x1,s.y1); ctx.lineTo(s.x1+nx,s.y1+ny);
+  ctx.moveTo(s.x2,s.y2); ctx.lineTo(s.x2+nx,s.y2+ny);
+  const arrL=8/zoom;
+  const mx=(s.x1+s.x2)/2+nx, my=(s.y1+s.y2)/2+ny;
+  ctx.moveTo(s.x1+nx,s.y1+ny); ctx.lineTo(s.x1+nx+Math.cos(ang)*arrL,s.y1+ny+Math.sin(ang)*arrL);
+  ctx.moveTo(s.x2+nx,s.y2+ny); ctx.lineTo(s.x2+nx-Math.cos(ang)*arrL,s.y2+ny-Math.sin(ang)*arrL);
+  ctx.stroke();
+  ctx.fillStyle='#ffcc00'; ctx.font=`bold ${11/zoom}px Arial`;
+  ctx.textAlign='center'; ctx.textBaseline='bottom';
+  ctx.save(); ctx.translate(mx,my); ctx.rotate(ang);
+  ctx.fillText(Math.round(len)+'px',0,-3/zoom);
+  ctx.restore();
+}
+
+function drawGrid(){
+  const g=parseInt(document.getElementById('gridSize').value)||20;
+  const w=canvas.width, h=canvas.height;
+  const x0=(-panX/zoom), y0=(-panY/zoom);
+  const x1=x0+w/zoom, y1=y0+h/zoom;
+  ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.lineWidth=1/zoom;
+  const startXg=Math.floor(x0/g)*g, startYg=Math.floor(y0/g)*g;
+  for(let x=startXg;x<=x1;x+=g){ ctx.beginPath();ctx.moveTo(x,y0);ctx.lineTo(x,y1);ctx.stroke(); }
+  for(let y=startYg;y<=y1;y+=g){ ctx.beginPath();ctx.moveTo(x0,y);ctx.lineTo(x1,y);ctx.stroke(); }
+  ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.lineWidth=1/zoom;
+  const bg=g*5;
+  for(let x=Math.floor(x0/bg)*bg;x<=x1;x+=bg){ ctx.beginPath();ctx.moveTo(x,y0);ctx.lineTo(x,y1);ctx.stroke(); }
+  for(let y=Math.floor(y0/bg)*bg;y<=y1;y+=bg){ ctx.beginPath();ctx.moveTo(x0,y);ctx.lineTo(x1,y);ctx.stroke(); }
+}
+
+function drawSelectionHandles(s){
+  const b=getBounds(s);
+  ctx.strokeStyle='#e94560'; ctx.lineWidth=2/zoom; ctx.setLineDash([4/zoom,2/zoom]);
+  ctx.strokeRect(b.x-5/zoom,b.y-5/zoom,b.w+10/zoom,b.h+10/zoom);
+  ctx.setLineDash([]);
+  ctx.fillStyle='#e94560';
+  [[b.x,b.y],[b.x+b.w,b.y],[b.x,b.y+b.h],[b.x+b.w,b.y+b.h]].forEach(([hx,hy])=>{
+    ctx.fillRect(hx-4/zoom,hy-4/zoom,8/zoom,8/zoom);
+  });
+}
+
+function redraw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.save();
+  ctx.translate(panX,panY);
+  ctx.scale(zoom,zoom);
+  drawGrid();
+
+  layers.forEach(layer=>{
+    if(!layer.visible) return;
+    shapes.filter(s=>s.layer===layer.id).forEach(s=>{
+      drawShape(s);
+      if(selected.includes(s.id)) drawSelectionHandles(s);
+    });
+  });
+
+  if(tempShape) drawShape(tempShape,true);
+
+  if(tool==='poly' && polyPoints.length>0){
+    ctx.strokeStyle='rgba(255,255,0,0.8)'; ctx.lineWidth=1.5/zoom; ctx.setLineDash([5/zoom,3/zoom]);
+    ctx.beginPath(); ctx.moveTo(polyPoints[0].x,polyPoints[0].y);
+    polyPoints.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));
+    if(curX!==undefined) ctx.lineTo(curX,curY);
+    ctx.stroke(); ctx.setLineDash([]);
+    polyPoints.forEach(p=>{ ctx.fillStyle='#ffff00'; ctx.beginPath(); ctx.arc(p.x,p.y,4/zoom,0,Math.PI*2); ctx.fill(); });
+  }
+
+  ctx.restore();
+}
+
+function getBounds(s){
+  switch(s.type){
+    case 'line': return {x:Math.min(s.x1,s.x2),y:Math.min(s.y1,s.y2),w:Math.abs(s.x2-s.x1),h:Math.abs(s.y2-s.y1),cx:(s.x1+s.x2)/2,cy:(s.y1+s.y2)/2};
+    case 'rect': return {x:s.x,y:s.y,w:s.w,h:s.h,cx:s.x+s.w/2,cy:s.y+s.h/2};
+    case 'circle': return {x:s.cx-s.r,y:s.cy-s.r,w:s.r*2,h:s.r*2,cx:s.cx,cy:s.cy};
+    case 'ellipse': return {x:s.cx-s.rx,y:s.cy-s.ry,w:s.rx*2,h:s.ry*2,cx:s.cx,cy:s.cy};
+    case 'poly':{ const xs=s.points.map(p=>p.x),ys=s.points.map(p=>p.y); const x=Math.min(...xs),y=Math.min(...ys),w=Math.max(...xs)-x,h=Math.max(...ys)-y; return {x,y,w,h,cx:x+w/2,cy:y+h/2}; }
+    case 'text': return {x:s.x-50,y:s.y-14,w:100,h:16,cx:s.x,cy:s.y};
+    case 'dim': return {x:Math.min(s.x1,s.x2),y:Math.min(s.y1,s.y2),w:Math.abs(s.x2-s.x1),h:Math.abs(s.y2-s.y1),cx:(s.x1+s.x2)/2,cy:(s.y1+s.y2)/2};
+    default: return {x:0,y:0,w:0,h:0,cx:0,cy:0};
+  }
+}
+
+function moveShape(s,dx,dy){
+  switch(s.type){
+    case 'line': case 'dim': s.x1+=dx;s.y1+=dy;s.x2+=dx;s.y2+=dy; break;
+    case 'rect': s.x+=dx;s.y+=dy; break;
+    case 'circle': case 'ellipse': s.cx+=dx;s.cy+=dy; break;
+    case 'poly': s.points=s.points.map(p=>({x:p.x+dx,y:p.y+dy})); break;
+    case 'text': s.x+=dx;s.y+=dy; break;
+  }
+}
+
+function hitTest(wx,wy){
+  for(let i=shapes.length-1;i>=0;i--){
+    const s=shapes[i];
+    const b=getBounds(s);
+    const pad=8/zoom;
+    if(wx>=b.x-pad&&wx<=b.x+b.w+pad&&wy>=b.y-pad&&wy<=b.y+b.h+pad) return s;
+  }
+  return null;
+}
+
+function deleteSelected(){
+  shapes=shapes.filter(s=>!selected.includes(s.id));
+  selected=[];
+  pushHistory();
+  document.getElementById('s-count').textContent=`عناصر: ${shapes.length}`;
+  updateStats();
+  showProps();
+  redraw();
+}
+
+function clearAll(){
+  if(!confirm('هتمسح كل العناصر؟')) return;
+  shapes=[];selected=[];
+  pushHistory();
+  document.getElementById('s-count').textContent='عناصر: 0';
+  updateStats();
+  redraw();
+}
+
+function pushHistory(){
+  history=history.slice(0,histIdx+1);
+  history.push(JSON.parse(JSON.stringify(shapes)));
+  histIdx=history.length-1;
+}
+
+function undo(){
+  if(histIdx>0){ histIdx--; shapes=JSON.parse(JSON.stringify(history[histIdx])); selected=[]; redraw(); updateStats(); }
+}
+
+function redo(){
+  if(histIdx<history.length-1){ histIdx++; shapes=JSON.parse(JSON.stringify(history[histIdx])); selected=[]; redraw(); updateStats(); }
+}
+
+function zoomIn(){ zoom=Math.min(50,zoom*1.2); document.getElementById('s-zoom').textContent=`تكبير: ${Math.round(zoom*100)}%`; redraw(); }
+function zoomOut(){ zoom=Math.max(0.05,zoom/1.2); document.getElementById('s-zoom').textContent=`تكبير: ${Math.round(zoom*100)}%`; redraw(); }
+function resetView(){ zoom=1;panX=0;panY=0; document.getElementById('s-zoom').textContent='تكبير: 100%'; redraw(); }
+
+function exportPNG(){
+  const tmp=document.createElement('canvas');
+  tmp.width=canvas.width; tmp.height=canvas.height;
+  const tc=tmp.getContext('2d');
+  tc.fillStyle='#1a1a2e'; tc.fillRect(0,0,tmp.width,tmp.height);
+  tc.drawImage(canvas,0,0);
+  const a=document.createElement('a'); a.href=tmp.toDataURL(); a.download='cad_drawing.png'; a.click();
+}
+
+function exportSVG(){
+  let svgContent=`<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width}" height="${canvas.height}" style="background:#1a1a2e">\n`;
+  shapes.forEach(s=>{
+    const sw=s.lineWidth||1.5;
+    const sc=s.stroke||'#00d4ff';
+    const fc=s.useFill?(s.fill||'#1a1a2e'):'none';
+    const ws=x=>x*zoom+panX, wy=y=>y*zoom+panY;
+    switch(s.type){
+      case 'line': svgContent+=`<line x1="${ws(s.x1)}" y1="${wy(s.y1)}" x2="${ws(s.x2)}" y2="${wy(s.y2)}" stroke="${sc}" stroke-width="${sw}" stroke-linecap="round"/>\n`; break;
+      case 'rect': svgContent+=`<rect x="${ws(s.x)}" y="${wy(s.y)}" width="${s.w*zoom}" height="${s.h*zoom}" fill="${fc}" stroke="${sc}" stroke-width="${sw}"/>\n`; break;
+      case 'circle': svgContent+=`<circle cx="${ws(s.cx)}" cy="${wy(s.cy)}" r="${s.r*zoom}" fill="${fc}" stroke="${sc}" stroke-width="${sw}"/>\n`; break;
+      case 'ellipse': svgContent+=`<ellipse cx="${ws(s.cx)}" cy="${wy(s.cy)}" rx="${s.rx*zoom}" ry="${s.ry*zoom}" fill="${fc}" stroke="${sc}" stroke-width="${sw}"/>\n`; break;
+      case 'poly': const pts=s.points.map(p=>`${ws(p.x)},${wy(p.y)}`).join(' '); svgContent+=`<polygon points="${pts}" fill="${fc}" stroke="${sc}" stroke-width="${sw}"/>\n`; break;
+      case 'text': svgContent+=`<text x="${ws(s.x)}" y="${wy(s.y)}" fill="${sc}" font-size="14" font-family="Arial">${s.text}</text>\n`; break;
+    }
+  });
+  svgContent+='</svg>';
+  const blob=new Blob([svgContent],{type:'image/svg+xml'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='cad_drawing.svg'; a.click();
+}
+
+function saveProject(){
+  const data=JSON.stringify({shapes,layers,zoom,panX,panY});
+  const blob=new Blob([data],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='cad_project.json'; a.click();
+}
+
+function loadProject(){
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='.json';
+  inp.onchange=e=>{
+    const f=e.target.files[0]; if(!f) return;
+    const r=new FileReader(); r.onload=ev=>{
+      try{
+        const d=JSON.parse(ev.target.result);
+        shapes=d.shapes||[]; layers=d.layers||layers;
+        zoom=d.zoom||1; panX=d.panX||0; panY=d.panY||0;
+        idCounter=Math.max(...shapes.map(s=>s.id),0)+1;
+        pushHistory(); redraw(); updateLayers(); updateStats();
+        document.getElementById('s-count').textContent=`عناصر: ${shapes.length}`;
+      }catch(err){ alert('خطأ في قراءة الملف'); }
+    }; r.readAsText(f);
+  };
+  inp.click();
+}
+
+function showProps(){
+  const el=document.getElementById('props');
+  if(!selected.length){ el.innerHTML='<div style="color:#555;font-size:11px">اختر عنصر</div>'; return; }
+  const s=shapes.find(x=>x.id===selected[0]);
+  if(!s){ el.innerHTML=''; return; }
+  const b=getBounds(s);
+  let html=`<div class="prop-row"><label>النوع</label><div style="color:#e94560">${{line:'خط',rect:'مستطيل',circle:'دائرة',ellipse:'بيضاوي',poly:'مضلع',dim:'بُعد',text:'نص'}[s.type]||s.type}</div></div>`;
+  html+=`<div class="prop-row"><label>الأبعاد</label><div style="color:#aaa">${Math.round(b.w)} × ${Math.round(b.h)}</div></div>`;
+  html+=`<div class="prop-row"><label>الموضع X</label><input type="number" value="${Math.round(b.cx)}" onchange="moveShapeAbs(${s.id},'x',this.value)"></div>`;
+  html+=`<div class="prop-row"><label>الموضع Y</label><input type="number" value="${Math.round(b.cy)}" onchange="moveShapeAbs(${s.id},'y',this.value)"></div>`;
+  if(s.type==='rect'){ html+=`<div class="prop-row"><label>العرض</label><input type="number" value="${Math.round(s.w)}" onchange="s=shapes.find(x=>x.id==${s.id});s.w=+this.value;pushHistory();redraw()"></div>`; html+=`<div class="prop-row"><label>الارتفاع</label><input type="number" value="${Math.round(s.h)}" onchange="s=shapes.find(x=>x.id==${s.id});s.h=+this.value;pushHistory();redraw()"></div>`; }
+  if(s.type==='circle'){ html+=`<div class="prop-row"><label>نصف القطر</label><input type="number" value="${Math.round(s.r)}" onchange="shapes.find(x=>x.id==${s.id}).r=+this.value;pushHistory();redraw()"></div>`; }
+  el.innerHTML=html;
+}
+
+function moveShapeAbs(id,axis,val){
+  const s=shapes.find(x=>x.id===id); if(!s) return;
+  const b=getBounds(s);
+  if(axis==='x') moveShape(s,val-b.cx,0); else moveShape(s,0,val-b.cy);
+  pushHistory(); redraw();
+}
+
+function addLayer(){
+  const name=prompt('اسم الطبقة:','طبقة '+(layers.length+1)); if(!name) return;
+  const color='#'+Math.floor(Math.random()*0xffffff).toString(16).padStart(6,'0');
+  layers.push({id:layers.length,name,color,visible:true});
+  currentLayer=layers.length-1;
+  updateLayers();
+}
+
+function updateLayers(){
+  const el=document.getElementById('layer-list');
+  el.innerHTML=layers.map((l,i)=>`
+    <div class="layer-item ${currentLayer===l.id?'active':''}" onclick="currentLayer=${l.id};updateLayers()">
+      <div class="layer-dot" style="background:${l.color}"></div>
+      <span style="flex:1">${l.name}</span>
+      <span onclick="event.stopPropagation();l.visible=!l.visible;redraw();updateLayers()" style="cursor:pointer">${l.visible?'👁':'🚫'}</span>
+    </div>
+  `).join('');
+}
+
+function updateStats(){
+  const counts={};
+  shapes.forEach(s=>{ counts[s.type]=(counts[s.type]||0)+1; });
+  const el=document.getElementById('stats');
+  el.innerHTML=Object.entries({line:'خطوط',rect:'مستطيلات',circle:'دوائر',ellipse:'بيضاوي',poly:'مضلعات',dim:'أبعاد',text:'نصوص'})
+    .map(([k,v])=>counts[k]?`${v}: ${counts[k]}`:'').filter(Boolean).join('<br>')||'لا يوجد عناصر';
+}
+
+updateLayers();
+</script>
+</body>
+</html>
